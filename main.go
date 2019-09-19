@@ -64,7 +64,7 @@ func main() {
 	var res Swagger
 	dec := json.NewDecoder(file)
 	if err := dec.Decode(&res); err != nil {
-		log.Fatalf("Decoding", err)
+		log.Fatalf("Decoding %s", err)
 	}
 
 	//-
