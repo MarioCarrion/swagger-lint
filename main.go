@@ -107,7 +107,7 @@ func main() {
 				}
 
 				resRegEx := regexp.MustCompile(`(?i)response$`)
-				if !resRegEx.MatchString(response.Schema.Ref) {
+				if response.Schema.Ref != "" && !resRegEx.MatchString(response.Schema.Ref) {
 					errors = append(errors, fmt.Sprintf("Operation ID '%s' Code %s, response model must be postfixed with response: '%s'", code, path.OperationID, response.Schema.Ref))
 				}
 			}

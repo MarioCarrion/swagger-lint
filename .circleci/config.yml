@@ -2,7 +2,7 @@ version: 2
 jobs:
   all:
     docker:
-      - image: circleci/golang:1.13
+      - image: circleci/golang:1.15
     steps:
       - checkout
       - run: go mod download
