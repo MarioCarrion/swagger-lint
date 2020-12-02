@@ -15,21 +15,23 @@ type (
 	Verb     string
 	Code     string
 
+	Errors map[Resource][]string
+
 	//-
 
 	Schema struct {
-		Type                 string               `json:"type,omitempty"`
-		Items                map[string]string    `json:"items,omitempty"`
-		Ref                  string               `json:"$ref,omitempty"`
-		AdditionalProperties AdditionalProperties `json:"additionalProperties"`
+		Type string `json:"type"`
+		Ref  string `json:"$ref"`
 	}
 
-	AdditionalProperties struct {
-		Ref string `json:"$ref,omitempty"`
+	Parameter struct {
+		In     string `json:"in"`
+		Schema Schema `json:"schema"`
+		Name   string `json:"name"`
 	}
 
 	Response struct {
-		Schema Schema `json:"schema,omitempty"`
+		Schema Schema `json:"schema"`
 	}
 
 	Responses map[Code]Response
@@ -37,9 +39,10 @@ type (
 	//-
 
 	Path struct {
-		Tags        []string  `json:"tags"`
-		OperationID string    `json:"operationId"`
-		Responses   Responses `json:"responses"`
+		Tags        []string    `json:"tags"`
+		OperationID string      `json:"operationId"`
+		Parameters  []Parameter `json:"parameters"`
+		Responses   Responses   `json:"responses"`
 	}
 
 	Paths map[Verb]Path
@@ -52,12 +55,12 @@ type (
 func main() {
 	var input string
 
-	flag.StringVar(&input, "input", "", "Swagger JSON file.")
+	flag.StringVar(&input, "input", "", "Swagger 2.0 JSON file.")
 	flag.Parse()
 
 	file, err := os.Open(input)
 	if err != nil {
-		log.Fatalf("reading file: %s", err)
+		log.Fatalf("Reading input: %s", err)
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
@@ -68,93 +71,82 @@ func main() {
 	//-
 
 	var res Swagger
-	dec := json.NewDecoder(file)
-	if err := dec.Decode(&res); err != nil {
+
+	if err := json.NewDecoder(file).Decode(&res); err != nil {
 		log.Fatalf("Decoding %s", err)
 	}
 
-	//-
+	errors := res.Validate()
 
-	var errors []string
+	var count int
+	for path, errs := range errors {
+		fmt.Printf("\n%s\n", path)
+		for _, err := range errs {
+			fmt.Printf("\t%s\n", err)
+			count++
+		}
+	}
 
-	for resource, paths := range res.Paths {
+	if len(errors) > 0 {
+		fmt.Printf("\nTotal violations: %d\n", count)
+		os.Exit(1)
+	}
+
+	fmt.Printf("File Swagger 2.0 linting rules")
+}
+
+func (s Swagger) Validate() Errors {
+	var res Errors = make(map[Resource][]string)
+
+	for resource, paths := range s.Paths {
+		var errors []string
+
 		for verb, path := range paths {
 			if path.OperationID == "" {
-				errors = append(errors, fmt.Sprintf("Path '%s': is missing operation id.", resource))
+				errors = append(errors, "Missing operation id.")
 			} else if strings.ToLower(path.OperationID)[0:len(verb)] != string(verb) {
-				errors = append(errors, fmt.Sprintf("Operation ID '%s' Resource '%s': must begin with '%s'.", path.OperationID, resource, verb))
+				errors = append(errors, fmt.Sprintf("'%s': Resource must begin with '%s'.", path.OperationID, verb))
 			}
 
 			if len(path.Tags) == 0 {
-				errors = append(errors, fmt.Sprintf("Resource '%s': must define at least one tag.", resource))
+				errors = append(errors, "Resource must define at least one tag.")
+			}
+
+			prefix := strings.Title(path.OperationID)
+
+			for _, parameter := range path.Parameters {
+				if parameter.In == "body" && parameter.Schema.Ref != "" {
+					verbAllRegEx := regexp.MustCompile(fmt.Sprintf(`^(#\/definitions\/%sRequest)`, prefix))
+					if !verbAllRegEx.MatchString(parameter.Schema.Ref) {
+						errors = append(errors, fmt.Sprintf("'%s': Body request model must be prefixed with verb+Request: '%s'.", path.OperationID, parameter.Schema.Ref))
+					}
+				}
+
+				if parameter.In == "query" && strings.ToLower(parameter.Name) != parameter.Name {
+					errors = append(errors, fmt.Sprintf("'%s': Query arguments must be lowercase: '%s'", path.OperationID, parameter.Name))
+				}
 			}
 
 			for code, response := range path.Responses {
 				if strings.HasPrefix(string(code), "2") {
 					if response.Schema.Type == "array" {
-						errors = validateArray(errors, response.Schema.Items, path.OperationID)
+						errors = append(errors, fmt.Sprintf("'%s': Instead of using Array as a response, prefer definining a new model.", path.OperationID))
 					}
-					continue
 
-					verbAllRegEx := regexp.MustCompile(`(?i)^(#\/definitions\/)(post|get|put|delete)`)
-					if !verbAllRegEx.MatchString(response.Schema.Ref) {
-						errors = append(errors, fmt.Sprintf("Operation ID '%s' Code %s, response model must be prefixed with verb: '%s'", code, path.OperationID, response.Schema.Ref))
+					if response.Schema.Ref != "" {
+						verbAllRegEx := regexp.MustCompile(fmt.Sprintf(`^(#\/definitions\/%sResponse)`, prefix))
+						if !verbAllRegEx.MatchString(response.Schema.Ref) {
+							errors = append(errors, fmt.Sprintf("'%s': Code %s, response model must be prefixed with verb+Response: '%s'.", path.OperationID, code, response.Schema.Ref))
+						}
 					}
 				}
+			}
 
-				if code == "301" { // redirect
-					continue
-				}
-
-				resRegEx := regexp.MustCompile(`(?i)response$`)
-				if response.Schema.Ref != "" && !resRegEx.MatchString(response.Schema.Ref) {
-					errors = append(errors, fmt.Sprintf("Operation ID '%s' Code %s, response model must be postfixed with response: '%s'", code, path.OperationID, response.Schema.Ref))
-				}
+			if len(errors) > 0 {
+				res[resource] = errors
 			}
 		}
 	}
 
-	//-
-
-	PrettyPrint(&res)
-
-	for _, err := range errors {
-		fmt.Println(err)
-	}
-
-	if len(errors) > 0 {
-		os.Exit(1)
-	}
-
-}
-
-func validateArray(errors []string, items map[string]string, operationID string) []string {
-	v, ok := items["$ref"]
-	if !ok {
-		errors = append(errors, fmt.Sprintf("Operation ID '%s', Array: is missing the $ref field", operationID))
-	}
-
-	resBothRegEx := regexp.MustCompile(`(?i)(response|request)$`)
-	if resBothRegEx.MatchString(v) {
-		errors = append(errors, fmt.Sprintf("Operation ID '%s', Array: model must be not postfixed with response/request: '%s'", operationID, v))
-	}
-
-	verbAllRegEx := regexp.MustCompile(`(?i)^(#\/definitions\/)(post|get|put|delete)`)
-	if verbAllRegEx.MatchString(v) {
-		errors = append(errors, fmt.Sprintf("Operation ID '%s', Array: model must be not prefixed with verbs: '%s'", operationID, v))
-	}
-
-	return errors
-}
-
-// print the contents of the obj
-func PrettyPrint(data interface{}) {
-	var p []byte
-	//    var err := error
-	p, err := json.MarshalIndent(data, "", "\t")
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	fmt.Printf("%s \n", p)
+	return res
 }
