@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"regexp"
@@ -12,12 +14,10 @@ import (
 
 type (
 	Resource string
-	Verb     string
+	Method   string
 	Code     string
 
-	Errors map[Resource][]string
-
-	//-
+	Violations map[Resource][]string
 
 	Schema struct {
 		Type string `json:"type"`
@@ -36,8 +36,6 @@ type (
 
 	Responses map[Code]Response
 
-	//-
-
 	Path struct {
 		Tags        []string    `json:"tags"`
 		OperationID string      `json:"operationId"`
@@ -45,7 +43,7 @@ type (
 		Responses   Responses   `json:"responses"`
 	}
 
-	Paths map[Verb]Path
+	Paths map[Method]Path
 
 	Swagger struct {
 		Paths map[Resource]Paths `json:"paths"`
@@ -58,29 +56,28 @@ func main() {
 	flag.StringVar(&input, "input", "", "Swagger 2.0 JSON file.")
 	flag.Parse()
 
-	file, err := os.Open(input)
+	//-
+
+	b, err := ioutil.ReadFile(input)
 	if err != nil {
 		log.Fatalf("Reading input: %s", err)
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			log.Fatalf("Closing input: %s", err)
-		}
-	}()
 
 	//-
 
 	var res Swagger
 
-	if err := json.NewDecoder(file).Decode(&res); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(b)).Decode(&res); err != nil {
 		log.Fatalf("Decoding %s", err)
 	}
 
 	errors := res.Validate()
 
 	var count int
+
 	for path, errs := range errors {
 		fmt.Printf("\n%s\n", path)
+
 		for _, err := range errs {
 			fmt.Printf("\t%s\n", err)
 			count++
@@ -95,58 +92,108 @@ func main() {
 	fmt.Printf("File Swagger 2.0 linting rules")
 }
 
-func (s Swagger) Validate() Errors {
-	var res Errors = make(map[Resource][]string)
+func (s Swagger) Validate() Violations {
+	var res Violations = make(map[Resource][]string)
 
 	for resource, paths := range s.Paths {
-		var errors []string
+		var violations []string
 
 		for verb, path := range paths {
-			if path.OperationID == "" {
-				errors = append(errors, "Missing operation id.")
-			} else if strings.ToLower(path.OperationID)[0:len(verb)] != string(verb) {
-				errors = append(errors, fmt.Sprintf("'%s': Resource must begin with '%s'.", path.OperationID, verb))
+			if vs := s.validateOperationID(verb, path); len(vs) > 0 {
+				violations = append(violations, vs...)
 			}
 
-			if len(path.Tags) == 0 {
-				errors = append(errors, "Resource must define at least one tag.")
+			if vs := s.validateParameters(path); len(vs) > 0 {
+				violations = append(violations, vs...)
 			}
 
-			prefix := strings.Title(path.OperationID)
-
-			for _, parameter := range path.Parameters {
-				if parameter.In == "body" && parameter.Schema.Ref != "" {
-					verbAllRegEx := regexp.MustCompile(fmt.Sprintf(`^(#\/definitions\/%sRequest)`, prefix))
-					if !verbAllRegEx.MatchString(parameter.Schema.Ref) {
-						errors = append(errors, fmt.Sprintf("'%s': Body request model must be prefixed with verb+Request: '%s'.", path.OperationID, parameter.Schema.Ref))
-					}
-				}
-
-				if parameter.In == "query" && strings.ToLower(parameter.Name) != parameter.Name {
-					errors = append(errors, fmt.Sprintf("'%s': Query arguments must be lowercase: '%s'", path.OperationID, parameter.Name))
-				}
+			if vs := s.validateResponses(path); len(vs) > 0 {
+				violations = append(violations, vs...)
 			}
 
-			for code, response := range path.Responses {
-				if strings.HasPrefix(string(code), "2") {
-					if response.Schema.Type == "array" {
-						errors = append(errors, fmt.Sprintf("'%s': Instead of using Array as a response, prefer definining a new model.", path.OperationID))
-					}
-
-					if response.Schema.Ref != "" {
-						verbAllRegEx := regexp.MustCompile(fmt.Sprintf(`^(#\/definitions\/%sResponse)`, prefix))
-						if !verbAllRegEx.MatchString(response.Schema.Ref) {
-							errors = append(errors, fmt.Sprintf("'%s': Code %s, response model must be prefixed with verb+Response: '%s'.", path.OperationID, code, response.Schema.Ref))
-						}
-					}
-				}
-			}
-
-			if len(errors) > 0 {
-				res[resource] = errors
+			if len(violations) > 0 {
+				res[resource] = violations
 			}
 		}
 	}
 
 	return res
+}
+
+func (s Swagger) validateOperationID(method Method, path Path) []string {
+	res := make([]string, 0, 3)
+
+	if path.OperationID == "" {
+		res = append(res, "Missing operation id.")
+	} else if strings.ToLower(path.OperationID)[0:len(method)] != string(method) {
+		res = append(res, newViolation(path.OperationID, "Resource must begin with '%s'.", method))
+	}
+
+	if len(path.Tags) == 0 {
+		res = append(res, "Resource must define at least one tag.")
+	}
+
+	return res
+}
+
+func (s Swagger) validateParameters(path Path) []string {
+	res := make([]string, 0, 2)
+
+	for _, parameter := range path.Parameters {
+		if parameter.In == "body" && parameter.Schema.Ref != "" {
+			if !matchRegEx(parameter.Schema.Ref, `^(#\/definitions\/%sRequest)`, path.OperationID) {
+				res = append(res,
+					newViolation(path.OperationID,
+						"Body request model must be prefixed with method+Request: '%s'.", parameter.Schema.Ref))
+			}
+		}
+
+		if parameter.In == "query" && strings.ToLower(parameter.Name) != parameter.Name {
+			res = append(res,
+				newViolation(path.OperationID, "Query arguments must be lowercase: '%s'", parameter.Name))
+		}
+	}
+
+	return res
+}
+
+func (s Swagger) validateResponses(path Path) []string {
+	res := make([]string, 0, 2)
+
+	for code, response := range path.Responses {
+		if strings.HasPrefix(string(code), "2") {
+			if response.Schema.Type == "array" {
+				res = append(res,
+					newViolation(path.OperationID, "Instead of using Array as a response, prefer defining a new model."))
+			}
+
+			if response.Schema.Ref != "" {
+				if !matchRegEx(response.Schema.Ref, `^(#\/definitions\/%sResponse)`, path.OperationID) {
+					res = append(res,
+						newViolation(path.OperationID,
+							"Code %s, response model must be prefixed with method+Response: '%s'.", code, response.Schema.Ref))
+				}
+			}
+		}
+	}
+
+	return res
+}
+
+func matchRegEx(value, format, operationID string) bool {
+	prefix := strings.Title(operationID)
+
+	methodRegEx := regexp.MustCompile(fmt.Sprintf(format, prefix))
+
+	return methodRegEx.MatchString(value)
+}
+
+func newViolation(operationID string, format string, a ...interface{}) string {
+	var prefix string
+
+	if operationID != "" {
+		prefix = fmt.Sprintf("'%s': ", operationID)
+	}
+
+	return fmt.Sprintf("%s%s", prefix, fmt.Sprintf(format, a...))
 }

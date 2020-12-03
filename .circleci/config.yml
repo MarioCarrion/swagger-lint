@@ -6,11 +6,27 @@ jobs:
     steps:
       - checkout
       - run: go mod download
+      - run: go install github.com/golangci/golangci-lint/cmd/golangci-lint
       - run: go test -v ./...
       - run: go build
+      - run: golangci-lint run ./...
+  release:
+    docker:
+      - image: circleci/golang:1.15.5
+    steps:
+      - checkout
+      - run: curl -sL https://git.io/goreleaser | bash
 
 workflows:
   version: 2
   test:
     jobs:
       - all
+  release:
+    jobs:
+      - release:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*(-.*)*/

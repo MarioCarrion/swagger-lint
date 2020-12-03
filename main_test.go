@@ -12,13 +12,13 @@ func TestSwagger_Validate(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    Swagger
-		expected Errors
+		expected Violations
 	}{
 		{
 			"Missing Operation ID",
 			Swagger{
 				Paths: map[Resource]Paths{
-					"/items": map[Verb]Path{
+					"/items": map[Method]Path{
 						"get": {
 							Tags: []string{"tag"},
 						},
@@ -30,10 +30,10 @@ func TestSwagger_Validate(t *testing.T) {
 			},
 		},
 		{
-			"Resource must begin with verb",
+			"Resource must begin with method",
 			Swagger{
 				Paths: map[Resource]Paths{
-					"/items": map[Verb]Path{
+					"/items": map[Method]Path{
 						"get": {
 							OperationID: "itemsOperationID",
 							Tags:        []string{"tag"},
@@ -49,7 +49,7 @@ func TestSwagger_Validate(t *testing.T) {
 			"Resource must define at least one tag.",
 			Swagger{
 				Paths: map[Resource]Paths{
-					"/items": map[Verb]Path{
+					"/items": map[Method]Path{
 						"get": {
 							OperationID: "getItems",
 						},
@@ -61,10 +61,10 @@ func TestSwagger_Validate(t *testing.T) {
 			},
 		},
 		{
-			"Body request model must be prefixed with verb+Request",
+			"Body request model must be prefixed with method+Request",
 			Swagger{
 				Paths: map[Resource]Paths{
-					"/items": map[Verb]Path{
+					"/items": map[Method]Path{
 						"post": {
 							OperationID: "postItems",
 							Tags:        []string{"tag"},
@@ -81,14 +81,14 @@ func TestSwagger_Validate(t *testing.T) {
 				},
 			},
 			map[Resource][]string{
-				"/items": {"'postItems': Body request model must be prefixed with verb+Request: '#/definitions/postItems'."},
+				"/items": {"'postItems': Body request model must be prefixed with method+Request: '#/definitions/postItems'."},
 			},
 		},
 		{
 			"Query arguments must be lowercase",
 			Swagger{
 				Paths: map[Resource]Paths{
-					"/items": map[Verb]Path{
+					"/items": map[Method]Path{
 						"get": {
 							OperationID: "getItems",
 							Tags:        []string{"tag"},
@@ -107,10 +107,10 @@ func TestSwagger_Validate(t *testing.T) {
 			},
 		},
 		{
-			"Instead of using Array prefer definining a new model.",
+			"Instead of using Array prefer defining a new model.",
 			Swagger{
 				Paths: map[Resource]Paths{
-					"/items": map[Verb]Path{
+					"/items": map[Method]Path{
 						"get": {
 							OperationID: "getItems",
 							Tags:        []string{"tag"},
@@ -126,14 +126,14 @@ func TestSwagger_Validate(t *testing.T) {
 				},
 			},
 			map[Resource][]string{
-				"/items": {"'getItems': Instead of using Array as a response, prefer definining a new model."},
+				"/items": {"'getItems': Instead of using Array as a response, prefer defining a new model."},
 			},
 		},
 		{
-			"Code 200, response model must be prefixed with verb+Response.",
+			"Code 200, response model must be prefixed with method+Response.",
 			Swagger{
 				Paths: map[Resource]Paths{
-					"/items": map[Verb]Path{
+					"/items": map[Method]Path{
 						"get": {
 							OperationID: "getItems",
 							Tags:        []string{"tag"},
@@ -149,7 +149,7 @@ func TestSwagger_Validate(t *testing.T) {
 				},
 			},
 			map[Resource][]string{
-				"/items": {"'getItems': Code 200, response model must be prefixed with verb+Response: '#/definitions/getItems'."},
+				"/items": {"'getItems': Code 200, response model must be prefixed with method+Response: '#/definitions/getItems'."},
 			},
 		},
 	}
@@ -166,6 +166,4 @@ func TestSwagger_Validate(t *testing.T) {
 			}
 		})
 	}
-
-	// Paths map[Resource]Paths `json:"paths"`
 }
