@@ -89,7 +89,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("File Swagger 2.0 linting rules")
+	fmt.Println("File follows the expected Swagger 2.0 rules")
 }
 
 func (s Swagger) Validate() Violations {
