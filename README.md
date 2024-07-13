@@ -1,3 +1,7 @@
+# Archived
+
+TIL I learned about [vacuum](https://github.com/daveshanley/vacuum), it looks solid, give it a try.
+
 # Opinionated Swagger 2.0 Linter
 
 ## Installing
